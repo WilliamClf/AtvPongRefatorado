@@ -14,6 +14,11 @@ AI_SPEED = 7
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
+SOUND_HIT   = "assets/sounds/hit.mp3"
+SOUND_WALL  = "assets/sounds/wall.mp3"
+SOUND_GOAL  = "assets/sounds/goal.mp3"
+SOUND_MUSIC = "assets/sounds/music.mp3"
+
 
 class PlayerController(ABC):
     @abstractmethod
@@ -71,6 +76,32 @@ class Paddle:
         return pygame.Rect(self.x, self.y, PADDLE_WIDTH, PADDLE_HEIGHT)
 
 
+class AudioManager:
+    def __init__(self) -> None:
+        pygame.mixer.init()
+        self._hit  = self._load(SOUND_HIT)
+        self._wall = self._load(SOUND_WALL)
+        self._goal = self._load(SOUND_GOAL)
+        self._load_music(SOUND_MUSIC)
+
+    def _load(self, path: str):
+        try:
+            return pygame.mixer.Sound(path)
+        except (FileNotFoundError, pygame.error):
+            return None
+
+    def _load_music(self, path: str) -> None:
+        try:
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.play(loops=-1)
+        except (FileNotFoundError, pygame.error):
+            pass
+
+    def play_hit(self)  -> None: self._hit  and self._hit.play()
+    def play_wall(self) -> None: self._wall and self._wall.play()
+    def play_goal(self) -> None: self._goal and self._goal.play()
+
+
 class Renderer:
     def __init__(self) -> None:
         pygame.init()
@@ -95,6 +126,7 @@ class Game:
         self.p2 = Paddle(SCREEN_WIDTH - 25)
         self.controller1 = controller1
         self.controller2 = controller2
+        self.audio = AudioManager()
         self.renderer = Renderer()
         self.clock = pygame.time.Clock()
         self.score1 = 0
@@ -104,13 +136,21 @@ class Game:
         if self.ball.rect().colliderect(self.p1.rect()) or \
            self.ball.rect().colliderect(self.p2.rect()):
             self.ball.vel_x *= -1
+            self.audio.play_hit()
+
+        prev_y = self.ball.y - self.ball.vel_y
+        if (prev_y > 0 and self.ball.y <= 0) or \
+           (prev_y < SCREEN_HEIGHT and self.ball.y >= SCREEN_HEIGHT):
+            self.audio.play_wall()
 
     def _handle_score(self) -> None:
         if self.ball.x <= 0:
             self.score2 += 1
+            self.audio.play_goal()
             self.ball.reset()
         elif self.ball.x >= SCREEN_WIDTH:
             self.score1 += 1
+            self.audio.play_goal()
             self.ball.reset()
 
     def _update(self) -> None:
