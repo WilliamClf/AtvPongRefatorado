@@ -1,5 +1,7 @@
 import pygame
 import sys
+import math
+import random
 from abc import ABC, abstractmethod
 
 SCREEN_WIDTH = 800
@@ -10,6 +12,9 @@ PADDLE_HEIGHT = 60
 BALL_SIZE = 7
 PLAYER_SPEED = 5
 AI_SPEED = 7
+BALL_SPEED_MIN = 4
+BALL_SPEED_MAX = 8
+BOUNCE_VARIATION = 2.0
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -51,14 +56,36 @@ class Ball:
     def reset(self) -> None:
         self.x = SCREEN_WIDTH // 2
         self.y = SCREEN_HEIGHT // 2
-        self.vel_x = 5
-        self.vel_y = 5
+        self.vel_x = 5 * random.choice([-1, 1])
+        self.vel_y = 5 * random.choice([-1, 1])
+
+    def _apply_variation(self) -> None:
+        self.vel_y += random.uniform(-BOUNCE_VARIATION, BOUNCE_VARIATION)
+        min_vy = 1.5
+        if abs(self.vel_y) < min_vy:
+            self.vel_y = math.copysign(min_vy, self.vel_y)
+        speed = (self.vel_x ** 2 + self.vel_y ** 2) ** 0.5
+        scale = max(BALL_SPEED_MIN, min(speed, BALL_SPEED_MAX)) / speed
+        self.vel_x *= scale
+        self.vel_y *= scale
+
+    def bounce_x(self) -> None:
+        self.vel_x *= -1
+        self._apply_variation()
+
+    def bounce_y(self) -> None:
+        self.vel_y *= -1
+        self._apply_variation()
 
     def move(self) -> None:
         self.x += self.vel_x
         self.y += self.vel_y
-        if self.y <= 0 or self.y >= SCREEN_HEIGHT:
-            self.vel_y *= -1
+        if self.y <= 0:
+            self.y = 0
+            self.bounce_y()
+        elif self.y >= SCREEN_HEIGHT:
+            self.y = SCREEN_HEIGHT - 1
+            self.bounce_y()
 
     def rect(self) -> pygame.Rect:
         return pygame.Rect(self.x, self.y, BALL_SIZE, BALL_SIZE)
@@ -135,7 +162,7 @@ class Game:
     def _handle_collisions(self) -> None:
         if self.ball.rect().colliderect(self.p1.rect()) or \
            self.ball.rect().colliderect(self.p2.rect()):
-            self.ball.vel_x *= -1
+            self.ball.bounce_x()
             self.audio.play_hit()
 
         prev_y = self.ball.y - self.ball.vel_y
