@@ -15,6 +15,8 @@ AI_SPEED = 7
 BALL_SPEED_MIN = 4
 BALL_SPEED_MAX = 8
 BOUNCE_VARIATION = 2.0
+POWERUP_INTERVAL = 5000
+FRAGMENT_COUNT = 3
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -50,14 +52,25 @@ class AIController(PlayerController):
 
 
 class Ball:
-    def __init__(self) -> None:
-        self.reset()
+    def __init__(self, x: float, y: float, vel_x: float, vel_y: float,
+                 color: tuple = WHITE, real: bool = True) -> None:
+        self.x = x
+        self.y = y
+        self.vel_x = vel_x
+        self.vel_y = vel_y
+        self.color = color
+        self.real = real
 
-    def reset(self) -> None:
-        self.x = SCREEN_WIDTH // 2
-        self.y = SCREEN_HEIGHT // 2
-        self.vel_x = 5 * random.choice([-1, 1])
-        self.vel_y = 5 * random.choice([-1, 1])
+    @classmethod
+    def spawn_center(cls) -> "Ball":
+        return cls(
+            x=SCREEN_WIDTH // 2,
+            y=SCREEN_HEIGHT // 2,
+            vel_x=5 * random.choice([-1, 1]),
+            vel_y=5 * random.choice([-1, 1]),
+            color=WHITE,
+            real=True,
+        )
 
     def _apply_variation(self) -> None:
         self.vel_y += random.uniform(-BOUNCE_VARIATION, BOUNCE_VARIATION)
@@ -88,7 +101,20 @@ class Ball:
             self.bounce_y()
 
     def rect(self) -> pygame.Rect:
-        return pygame.Rect(self.x, self.y, BALL_SIZE, BALL_SIZE)
+        return pygame.Rect(int(self.x), int(self.y), BALL_SIZE, BALL_SIZE)
+
+    def spawn_fragments(self) -> list["Ball"]:
+        fragments = []
+        for _ in range(FRAGMENT_COUNT):
+            color = (
+                random.randint(80, 255),
+                random.randint(80, 255),
+                random.randint(80, 255),
+            )
+            vel_x = self.vel_x * random.uniform(0.8, 1.2)
+            vel_y = self.vel_y * random.uniform(0.8, 1.2) * random.choice([-1, 1])
+            fragments.append(Ball(self.x, self.y, vel_x, vel_y, color, real=False))
+        return fragments
 
 
 class Paddle:
@@ -136,11 +162,14 @@ class Renderer:
         pygame.display.set_caption("Pong SOLID")
         self.font = pygame.font.SysFont(None, 36)
 
-    def draw(self, ball: Ball, p1: Paddle, p2: Paddle, score1: int, score2: int) -> None:
+    def draw(self, balls: list[Ball], p1: Paddle, p2: Paddle,
+             score1: int, score2: int) -> None:
         self.screen.fill(BLACK)
         pygame.draw.rect(self.screen, WHITE, p1.rect())
         pygame.draw.rect(self.screen, WHITE, p2.rect())
-        pygame.draw.circle(self.screen, WHITE, (ball.x, ball.y), BALL_SIZE)
+        for ball in balls:
+            pygame.draw.circle(self.screen, ball.color,
+                               (int(ball.x), int(ball.y)), BALL_SIZE)
         score = self.font.render(f"{score1} - {score2}", True, WHITE)
         self.screen.blit(score, score.get_rect(center=(SCREEN_WIDTH // 2, 30)))
         pygame.display.flip()
@@ -148,7 +177,6 @@ class Renderer:
 
 class Game:
     def __init__(self, controller1: PlayerController, controller2: PlayerController) -> None:
-        self.ball = Ball()
         self.p1 = Paddle(15)
         self.p2 = Paddle(SCREEN_WIDTH - 25)
         self.controller1 = controller1
@@ -158,32 +186,77 @@ class Game:
         self.clock = pygame.time.Clock()
         self.score1 = 0
         self.score2 = 0
+        self._reset_balls()
+        self._powerup_timer = pygame.time.get_ticks()
+        self._powerup_ready = False
+
+    def _reset_balls(self) -> None:
+        self.balls: list[Ball] = [Ball.spawn_center()]
+
+    def _real_ball(self) -> Ball:
+        return next(b for b in self.balls if b.real)
 
     def _handle_collisions(self) -> None:
-        if self.ball.rect().colliderect(self.p1.rect()) or \
-           self.ball.rect().colliderect(self.p2.rect()):
-            self.ball.bounce_x()
-            self.audio.play_hit()
+        new_fragments: list[Ball] = []
 
-        prev_y = self.ball.y - self.ball.vel_y
-        if (prev_y > 0 and self.ball.y <= 0) or \
-           (prev_y < SCREEN_HEIGHT and self.ball.y >= SCREEN_HEIGHT):
-            self.audio.play_wall()
+        for ball in self.balls:
+            hit_paddle = (ball.rect().colliderect(self.p1.rect()) or
+                          ball.rect().colliderect(self.p2.rect()))
+
+            if hit_paddle:
+                ball.bounce_x()
+                self.audio.play_hit()
+
+                if self._powerup_ready and ball.real:
+                    new_fragments = ball.spawn_fragments()
+                    self._powerup_ready = False
+                    self._powerup_timer = pygame.time.get_ticks()
+
+            prev_y = ball.y - ball.vel_y
+            if (prev_y > 0 and ball.y <= 0) or \
+               (prev_y < SCREEN_HEIGHT and ball.y >= SCREEN_HEIGHT):
+                self.audio.play_wall()
+
+        self.balls.extend(new_fragments)
 
     def _handle_score(self) -> None:
-        if self.ball.x <= 0:
-            self.score2 += 1
+        scored = False
+        for ball in self.balls:
+            if ball.real:
+                if ball.x <= 0:
+                    self.score2 += 1
+                    scored = True
+                elif ball.x >= SCREEN_WIDTH:
+                    self.score1 += 1
+                    scored = True
+
+        if scored:
             self.audio.play_goal()
-            self.ball.reset()
-        elif self.ball.x >= SCREEN_WIDTH:
-            self.score1 += 1
-            self.audio.play_goal()
-            self.ball.reset()
+            self._reset_balls()
+            self._powerup_ready = False
+            self._powerup_timer = pygame.time.get_ticks()
+            return
+
+        self.balls = [b for b in self.balls if 0 <= b.x <= SCREEN_WIDTH]
+        if not any(b.real for b in self.balls):
+            self._reset_balls()
+
+    def _handle_powerup_timer(self) -> None:
+        if not self._powerup_ready:
+            elapsed = pygame.time.get_ticks() - self._powerup_timer
+            if elapsed >= POWERUP_INTERVAL:
+                self._powerup_ready = True
 
     def _update(self) -> None:
-        self.ball.move()
-        self.controller1.update(self.p1, self.ball)
-        self.controller2.update(self.p2, self.ball)
+        self._handle_powerup_timer()
+
+        real = self._real_ball()
+        for ball in self.balls:
+            ball.move()
+
+        self.controller1.update(self.p1, real)
+        self.controller2.update(self.p2, real)
+
         self._handle_collisions()
         self._handle_score()
 
@@ -194,7 +267,7 @@ class Game:
                     pygame.quit()
                     sys.exit()
             self._update()
-            self.renderer.draw(self.ball, self.p1, self.p2, self.score1, self.score2)
+            self.renderer.draw(self.balls, self.p1, self.p2, self.score1, self.score2)
             self.clock.tick(FPS)
 
 
