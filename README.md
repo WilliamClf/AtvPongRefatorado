@@ -1,6 +1,6 @@
 # Pong SOLID
 
-Jogo Pong em Python + Pygame em arquivo único, estruturado com os princípios SOLID.
+Jogo Pong em Python + Pygame, arquivo único, arquitetura SOLID.
 
 ## Como executar
 
@@ -13,9 +13,22 @@ python pong.py
 
 ---
 
-## Configurações
+## Estrutura de arquivos
 
-Todas as constantes ficam no topo do arquivo e podem ser ajustadas sem tocar na lógica:
+```
+PongRefatorado/
+├── pong.py
+└── assets/
+    └── sounds/
+        ├── hit.mp3
+        ├── wall.mp3
+        ├── goal.mp3
+        └── music.mp3
+```
+
+---
+
+## Constantes
 
 | Constante | Valor | Descrição |
 |---|---|---|
@@ -27,58 +40,114 @@ Todas as constantes ficam no topo do arquivo e podem ser ajustadas sem tocar na 
 | `BALL_SIZE` | 7 | Raio da bola (px) |
 | `PLAYER_SPEED` | 5 | Velocidade da raquete do jogador (px/frame) |
 | `AI_SPEED` | 7 | Velocidade da raquete da IA (px/frame) |
+| `BALL_SPEED_MIN` | 4 | Velocidade mínima da bola após variação |
+| `BALL_SPEED_MAX` | 8 | Velocidade máxima da bola após variação |
+| `BOUNCE_VARIATION` | 2.0 | Intensidade da variação aleatória de ângulo no rebote |
+| `POWERUP_INTERVAL` | 5000 | Intervalo em ms para ativar a fragmentação |
+| `FRAGMENT_COUNT` | 3 | Quantidade de bolas falsas geradas na fragmentação |
 
 ---
 
 ## Classes
 
 ### `PlayerController` (ABC)
-Interface que todos os controladores devem implementar.
+
+Interface abstrata que todos os controladores devem implementar.
 
 ```python
 def update(self, paddle: Paddle, ball: Ball) -> None
 ```
 
+---
+
 ### `HumanController`
-Lê `K_UP` e `K_DOWN` a cada frame e move a raquete via `PLAYER_SPEED`.
+
+Lê o estado do teclado a cada frame e move a raquete com `PLAYER_SPEED`.
+
+| Tecla | Ação |
+|---|---|
+| `↑` | Move a raquete para cima |
+| `↓` | Move a raquete para baixo |
+
+---
 
 ### `AIController`
-Compara o centro da raquete com o `Y` da bola e move em direção a ela via `AI_SPEED`.
+
+Move a raquete automaticamente alinhando seu centro ao `Y` da bola verdadeira com `AI_SPEED`.
+
+---
 
 ### `Ball`
-Gerencia posição e velocidade da bola.
+
+Representa qualquer bola em jogo, verdadeira ou fragmento.
+
+| Atributo | Tipo | Descrição |
+|---|---|---|
+| `x, y` | `float` | Posição atual na tela |
+| `vel_x, vel_y` | `float` | Velocidade nos eixos X e Y |
+| `color` | `tuple` | Cor RGB da bola |
+| `real` | `bool` | `True` se é a bola que pontua, `False` se é distração |
 
 | Método | Descrição |
 |---|---|
-| `reset()` | Reposiciona no centro com velocidade padrão |
-| `move()` | Avança a posição e reflete nas paredes horizontais |
+| `spawn_center()` | Factory: cria a bola principal no centro com direção aleatória |
+| `_apply_variation()` | Aplica delta aleatório no ângulo e normaliza a velocidade entre `BALL_SPEED_MIN` e `BALL_SPEED_MAX` |
+| `bounce_x()` | Inverte `vel_x` e aplica variação |
+| `bounce_y()` | Inverte `vel_y` e aplica variação |
+| `move()` | Avança posição e rebate nas paredes, reposicionando a bola no limite antes de rebater |
 | `rect()` | Retorna `pygame.Rect` para detecção de colisão |
+| `spawn_fragments()` | Gera `FRAGMENT_COUNT` bolas falsas coloridas na mesma posição, na mesma direção horizontal |
+
+---
 
 ### `Paddle`
-Representa uma raquete com movimento limitado aos bordos da tela.
+
+Raquete com movimento restrito aos limites verticais da tela.
 
 | Método | Descrição |
 |---|---|
-| `move(dy)` | Move `dy` pixels no eixo Y com clamp |
+| `move(dy)` | Move `dy` pixels no eixo Y com clamp entre `0` e `SCREEN_HEIGHT - PADDLE_HEIGHT` |
 | `rect()` | Retorna `pygame.Rect` para detecção de colisão |
 
+---
+
+### `AudioManager`
+
+Gerencia todos os sons do jogo. Falha silenciosamente se algum arquivo não for encontrado.
+
+| Método | Arquivo | Quando é chamado |
+|---|---|---|
+| `play_hit()` | `hit.mp3` | Colisão da bola com a raquete |
+| `play_wall()` | `wall.mp3` | Colisão da bola com o topo ou fundo |
+| `play_goal()` | `goal.mp3` | Ponto marcado |
+| — | `music.mp3` | Trilha em loop contínuo durante o jogo |
+
+---
+
 ### `Renderer`
-Responsável exclusivamente pela camada visual.
+
+Responsável exclusivamente pela camada visual do jogo (SRP).
 
 | Método | Descrição |
 |---|---|
-| `__init__()` | Inicializa Pygame e cria a janela |
-| `draw(ball, p1, p2, s1, s2)` | Desenha fundo, raquetes, bola e placar |
+| `__init__()` | Inicializa Pygame, cria a janela e carrega a fonte |
+| `draw(balls, p1, p2, s1, s2)` | Desenha fundo, raquetes, todas as bolas com suas cores e o placar |
+
+---
 
 ### `Game`
-Coordena o loop principal, recebendo controladores via injeção de dependência.
+
+Coordena o loop principal. Controladores são injetados via construtor (DIP).
 
 | Método | Descrição |
 |---|---|
-| `_handle_collisions()` | Inverte `vel_x` ao colidir com uma raquete |
-| `_handle_score()` | Atualiza placar e reseta a bola quando ela sai da tela |
-| `_update()` | Executa um ciclo: move bola, atualiza controladores, colisões e placar |
-| `run()` | Loop principal a 60 FPS |
+| `_reset_balls()` | Substitui todas as bolas por uma nova bola principal no centro |
+| `_real_ball()` | Retorna a bola com `real=True` |
+| `_handle_collisions()` | Detecta colisões com raquetes e paredes, aplica rebote e dispara fragmentação quando o power-up está ativo |
+| `_handle_score()` | Pontua quando a bola real sai da tela, descarta falsas que saem e reseta se necessário |
+| `_handle_powerup_timer()` | Ativa `_powerup_ready` após `POWERUP_INTERVAL` ms |
+| `_update()` | Executa um ciclo: timer, movimento, controllers, colisões e placar |
+| `run()` | Loop principal a 60 FPS com captura de eventos |
 
 ---
 
@@ -86,26 +155,8 @@ Coordena o loop principal, recebendo controladores via injeção de dependência
 
 | Princípio | Aplicação |
 |---|---|
-| **S** — Single Responsibility | Cada classe tem uma única responsabilidade: `Ball` gerencia a bola, `Renderer` cuida da tela, `Game` coordena o jogo |
-| **O** — Open/Closed | Novos controladores podem ser adicionados sem alterar `Game` ou qualquer outra classe |
-| **L** — Liskov Substitution | `HumanController` e `AIController` são intercambiáveis onde se espera um `PlayerController` |
+| **S** — Single Responsibility | `AudioManager` cuida só do áudio, `Renderer` só da tela, `Ball` só da sua física |
+| **O** — Open/Closed | Novos controladores ou comportamentos podem ser adicionados sem alterar `Game` |
+| **L** — Liskov Substitution | `HumanController` e `AIController` são intercambiáveis onde se espera `PlayerController` |
 | **I** — Interface Segregation | `PlayerController` expõe apenas `update(paddle, ball)` |
 | **D** — Dependency Inversion | `Game` depende da abstração `PlayerController`, não das implementações concretas |
-
----
-
-## Extensibilidade
-
-Para adicionar um novo controlador, herde de `PlayerController` e implemente `update()`:
-
-```python
-class NetworkController(PlayerController):
-    def update(self, paddle: Paddle, ball: Ball) -> None:
-        paddle.move(self._receive_input())
-```
-
-Passe-o ao instanciar o jogo:
-
-```python
-Game(HumanController(), NetworkController()).run()
-```
